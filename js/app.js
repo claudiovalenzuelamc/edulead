@@ -82,7 +82,7 @@ function reportError(error, fallback = 'Ocurrió un error inesperado.') {
 function refreshApiKeyStatus() {
     const hasKey = Boolean(getStoredApiKey());
     apiKeyStatus.textContent = hasKey ? 'Clave activa' : 'Sin clave';
-    apiKeyStatus.className = `text-xs whitespace-nowrap ${hasKey ? 'text-emerald-600 font-medium' : 'text-gray-400'}`;
+    apiKeyStatus.className = `text-xs whitespace-nowrap ${hasKey ? 'text-gold-500 font-semibold' : 'text-ink-faint'}`;
 }
 
 function persistApiKey() {
