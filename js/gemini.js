@@ -5,8 +5,22 @@
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
-// gemini-1.5-flash ya fue dado de baja. Modelo estable + alias de respaldo por si cambia el catálogo.
-const MODELS = ['gemini-3.5-flash', 'gemini-flash-latest'];
+/**
+ * Cadena de modelos. Se prueba en orden:
+ * 1. gemini-3.5-flash        estable y de mejor calidad. gemini-1.5-flash está dado de baja.
+ * 2. gemini-3.1-flash-lite   más liviano: suele seguir disponible cuando el flagship devuelve 503.
+ * 3. gemini-flash-latest     alias, por si el catálogo cambia y los anteriores dan 404.
+ */
+const MODELS = ['gemini-3.5-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+
+/**
+ * Reintentos. Google recomienda backoff exponencial con jitter ante 429 y 5xx.
+ * Es mutable para poder ajustarlo (o anularlo en tests).
+ */
+export const retryConfig = { attemptsPerModel: 3, baseDelayMs: 800 };
+
+/** Errores transitorios: vale la pena reintentar. El resto se propaga de inmediato. */
+const RETRYABLE_CODES = new Set(['RATE_LIMIT_EXCEEDED', 'SERVER_ERROR', 'TIMEOUT', 'NETWORK_ERROR']);
 
 const REQUEST_TIMEOUT_MS = 30000;
 const MIN_NOTES_LENGTH = 10;
@@ -107,6 +121,14 @@ function stripCodeFences(text) {
     return text.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Backoff exponencial con jitter: 800ms, 1600ms, 3200ms... +/- aleatorio. */
+function backoffDelay(attempt) {
+    const exponential = retryConfig.baseDelayMs * 2 ** (attempt - 1);
+    return exponential + Math.random() * retryConfig.baseDelayMs * 0.5;
+}
+
 function buildPayload(curso, notas) {
     return {
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
@@ -121,12 +143,26 @@ function buildPayload(curso, notas) {
     };
 }
 
-async function postToModel(model, payload, apiKey) {
+function mapHttpError(status, body) {
+    const apiMessage = body?.error?.message || '';
+
+    if (status === 400 && /api key|API_KEY/i.test(apiMessage)) return new GeminiError('API_KEY_INVALID', apiMessage);
+    if (status === 400) return new GeminiError('BAD_REQUEST', apiMessage);
+    if (status === 401 || status === 403) return new GeminiError('API_KEY_INVALID', apiMessage);
+    if (status === 404) return new GeminiError('MODEL_NOT_FOUND', apiMessage);
+    if (status === 429) return new GeminiError('RATE_LIMIT_EXCEEDED', apiMessage);
+    if (status >= 500) return new GeminiError('SERVER_ERROR', `${status} ${apiMessage}`.trim());
+    return new GeminiError('HTTP_ERROR', `${status} ${apiMessage}`.trim());
+}
+
+/** Un intento: pide, valida y devuelve el resultado ya normalizado. */
+async function requestOnce(model, payload, apiKey) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+    let response;
     try {
-        return await fetch(`${API_BASE}/${model}:generateContent`, {
+        response = await fetch(`${API_BASE}/${model}:generateContent`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -136,91 +172,106 @@ async function postToModel(model, payload, apiKey) {
             body: JSON.stringify(payload),
             signal: controller.signal
         });
+    } catch (error) {
+        if (error?.name === 'AbortError') throw new GeminiError('TIMEOUT');
+        throw new GeminiError('NETWORK_ERROR', error?.message);
     } finally {
         clearTimeout(timeoutId);
     }
-}
 
-function mapHttpError(status, body) {
-    const apiMessage = body?.error?.message || '';
+    if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw mapHttpError(response.status, body);
+    }
 
-    if (status === 400 && /api key|API_KEY/i.test(apiMessage)) return new GeminiError('API_KEY_INVALID', apiMessage);
-    if (status === 400) return new GeminiError('BAD_REQUEST', apiMessage);
-    if (status === 401 || status === 403) return new GeminiError('API_KEY_INVALID', apiMessage);
-    if (status === 404) return new GeminiError('MODEL_NOT_FOUND', apiMessage);
-    if (status === 429) return new GeminiError('RATE_LIMIT_EXCEEDED', apiMessage);
-    if (status >= 500) return new GeminiError('SERVER_ERROR', apiMessage);
-    return new GeminiError('HTTP_ERROR', `${status} ${apiMessage}`.trim());
+    const data = await response.json().catch(() => null);
+    if (!data) throw new GeminiError('JSON_PARSE_ERROR');
+
+    const blockReason = data.promptFeedback?.blockReason;
+    if (blockReason) throw new GeminiError('CONTENT_BLOCKED', blockReason);
+
+    const candidate = data.candidates?.[0];
+    if (candidate?.finishReason === 'MAX_TOKENS') throw new GeminiError('RESPONSE_TRUNCATED');
+    if (candidate?.finishReason === 'SAFETY') throw new GeminiError('CONTENT_BLOCKED', 'SAFETY');
+
+    const rawText = candidate?.content?.parts?.map((part) => part.text).filter(Boolean).join('') || '';
+    if (!rawText.trim()) throw new GeminiError('EMPTY_RESPONSE');
+
+    let parsed;
+    try {
+        parsed = JSON.parse(stripCodeFences(rawText));
+    } catch (error) {
+        // El parseo es lo único que este try debe capturar.
+        throw new GeminiError('JSON_PARSE_ERROR', rawText.slice(0, 200));
+    }
+
+    const rawScore = Number(parsed.score);
+    if (!Number.isFinite(rawScore) || typeof parsed.argumento !== 'string' || !parsed.argumento.trim()) {
+        throw new GeminiError('INVALID_SCHEMA', JSON.stringify(parsed).slice(0, 200));
+    }
+
+    const score = Math.min(100, Math.max(1, Math.round(rawScore)));
+
+    return {
+        score,
+        probabilidad: probabilidadFromScore(score),
+        argumento: parsed.argumento.trim(),
+        modelo: model
+    };
 }
 
 /* ------------------------------ API pública ------------------------------ */
 
 /**
  * Califica un lead con Gemini.
+ *
+ * Reintenta los errores transitorios (429, 5xx, timeout, red) con backoff exponencial,
+ * y si un modelo sigue caído pasa al siguiente de la cadena.
+ *
  * @param {string} curso
  * @param {string} notas
  * @param {string} apiKey
+ * @param {{ onProgress?: (info: {model: string, attempt: number, code: string, waitMs?: number, switchingTo?: string}) => void }} [options]
  * @returns {Promise<{score:number, probabilidad:'Alta'|'Media'|'Baja', argumento:string, modelo:string}>}
  * @throws {GeminiError}
  */
-export async function analyzeLeadWithGemini(curso, notas, apiKey) {
+export async function analyzeLeadWithGemini(curso, notas, apiKey, options = {}) {
+    const { onProgress } = options;
+
     if (!apiKey || !String(apiKey).trim()) throw new GeminiError('API_KEY_MISSING');
     if (!notas || notas.trim().length < MIN_NOTES_LENGTH) throw new GeminiError('NOTES_TOO_SHORT');
 
     const payload = buildPayload(curso, notas.trim());
+    const key = String(apiKey).trim();
     let lastError = null;
 
-    for (const model of MODELS) {
-        let response;
-        try {
-            response = await postToModel(model, payload, String(apiKey).trim());
-        } catch (error) {
-            if (error?.name === 'AbortError') throw new GeminiError('TIMEOUT');
-            throw new GeminiError('NETWORK_ERROR', error?.message);
+    for (let modelIndex = 0; modelIndex < MODELS.length; modelIndex++) {
+        const model = MODELS[modelIndex];
+
+        for (let attempt = 1; attempt <= retryConfig.attemptsPerModel; attempt++) {
+            try {
+                return await requestOnce(model, payload, key);
+            } catch (error) {
+                lastError = error;
+
+                // El modelo no existe: no tiene sentido reintentarlo, se pasa al siguiente.
+                if (error.code === 'MODEL_NOT_FOUND') break;
+
+                // Errores del cliente (key inválida, JSON malo, contenido bloqueado): fallan de inmediato.
+                if (!RETRYABLE_CODES.has(error.code)) throw error;
+
+                if (attempt < retryConfig.attemptsPerModel) {
+                    const waitMs = backoffDelay(attempt);
+                    onProgress?.({ model, attempt, code: error.code, waitMs });
+                    await sleep(waitMs);
+                }
+            }
         }
 
-        if (!response.ok) {
-            const body = await response.json().catch(() => null);
-            lastError = mapHttpError(response.status, body);
-            // Solo vale reintentar con otro modelo si el modelo no existe.
-            if (lastError.code === 'MODEL_NOT_FOUND') continue;
-            throw lastError;
+        const nextModel = MODELS[modelIndex + 1];
+        if (nextModel) {
+            onProgress?.({ model, attempt: retryConfig.attemptsPerModel, code: lastError?.code, switchingTo: nextModel });
         }
-
-        const data = await response.json().catch(() => null);
-        if (!data) throw new GeminiError('JSON_PARSE_ERROR');
-
-        const blockReason = data.promptFeedback?.blockReason;
-        if (blockReason) throw new GeminiError('CONTENT_BLOCKED', blockReason);
-
-        const candidate = data.candidates?.[0];
-        if (candidate?.finishReason === 'MAX_TOKENS') throw new GeminiError('RESPONSE_TRUNCATED');
-        if (candidate?.finishReason === 'SAFETY') throw new GeminiError('CONTENT_BLOCKED', 'SAFETY');
-
-        const rawText = candidate?.content?.parts?.map((part) => part.text).filter(Boolean).join('') || '';
-        if (!rawText.trim()) throw new GeminiError('EMPTY_RESPONSE');
-
-        let parsed;
-        try {
-            parsed = JSON.parse(stripCodeFences(rawText));
-        } catch (error) {
-            // El parseo es lo único que este try debe capturar.
-            throw new GeminiError('JSON_PARSE_ERROR', rawText.slice(0, 200));
-        }
-
-        const rawScore = Number(parsed.score);
-        if (!Number.isFinite(rawScore) || typeof parsed.argumento !== 'string' || !parsed.argumento.trim()) {
-            throw new GeminiError('INVALID_SCHEMA', JSON.stringify(parsed).slice(0, 200));
-        }
-
-        const score = Math.min(100, Math.max(1, Math.round(rawScore)));
-
-        return {
-            score,
-            probabilidad: probabilidadFromScore(score),
-            argumento: parsed.argumento.trim(),
-            modelo: model
-        };
     }
 
     throw lastError ?? new GeminiError('MODEL_NOT_FOUND');
