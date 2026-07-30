@@ -11,6 +11,36 @@ de contacto en un tablero Kanban.
 HTML5 + TailwindCSS (Play CDN) + JavaScript ES6 modules. Sin backend, sin build, sin dependencias que instalar.
 Los datos viven en `localStorage`; la API Key vive en `sessionStorage` y nunca se commitea.
 
+## Identidad visual
+
+Interfaz oscura construida sobre la paleta corporativa. Los tokens se declaran una sola vez en
+`tailwind.config`, dentro de `index.html`, y nada en el código usa colores sueltos de Tailwind.
+
+| Token | Hex | Uso |
+| --- | --- | --- |
+| `night` | `#020202` | Fondo de página |
+| `surface` | `#0C0C0C` | Tarjetas, columnas y barra superior |
+| `raised` | `#141414` | Inputs, hover y bloques citados |
+| `line` | `#232323` | Bordes y separadores |
+| `coral-500` | `#ED5543` | Color de acción: botón primario, prioridad alta, errores |
+| `gold-500` | `#FBC80C` | Atención: prioridad media, advertencias, clave activa |
+| `grape-500` | `#2F0558` | Morado corporativo: prioridad baja, confirmaciones |
+| `ink` | `#FDFDFD` | Texto principal |
+
+Criterios aplicados:
+
+- **Mapeo semántico del Kanban.** Alta = coral (lead caliente, contactar ya), Media = amarillo,
+  Baja = morado, Sin calificar = neutro. Es el mismo código de color de la marca, donde el coral
+  marca lo que requiere acción inmediata y el amarillo lo que solo requiere atención.
+- **El morado nunca va como texto sobre negro.** `#2F0558` tiene contraste 1.20:1 contra `#0C0C0C`,
+  así que se usa solo como relleno con texto blanco encima (16:1). Para texto y bordes se usa el
+  tono derivado `grape-300` (`#A17BC7`, 5.75:1).
+- **Sobre coral y amarillo el texto va en negro,** no en blanco: `#020202` sobre coral da 5.91:1
+  mientras que el blanco da 3.45:1, y sobre amarillo la diferencia es 13.21:1 contra 1.54:1.
+- **Todas las escalas se derivaron del hue del color corporativo** y se verificaron contra WCAG AA.
+- El fondo se llama `night` y no `base` porque `text-base` ya existe en Tailwind como tamaño de
+  fuente, y declarar un color `base` haría que esa clase aplicara color y tamaño a la vez.
+
 ## Estructura
 
 ```

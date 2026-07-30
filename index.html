@@ -3,18 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EduLead AI - CRM Estático con Lead Scoring</title>
+    <meta name="theme-color" content="#020202">
+    <title>EduLead AI - CRM con Lead Scoring</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        /* Design tokens de marca.
+           Corporativos: coral #ED5543, amarillo #FBC80C, morado #2F0558, fondo #020202, superficie #0C0C0C.
+           Las escalas se derivaron del mismo hue y se verificaron contra WCAG AA sobre los fondos oscuros.
+           Nota: el fondo se llama "night" y no "base" porque "text-base" ya existe en Tailwind como tamaño. */
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        night: '#020202',       // fondo de página
+                        surface: '#0C0C0C',     // tarjetas y columnas
+                        raised: '#141414',      // inputs y hover
+                        line: '#232323',        // bordes
+                        ink: {
+                            DEFAULT: '#FDFDFD',
+                            muted: '#A1A1AA',
+                            faint: '#71717A'
+                        },
+                        coral: {
+                            200: '#FCB4AB', 300: '#F7988D', 400: '#F26E5F',
+                            500: '#ED5543', 600: '#C23F30', 900: '#47150F'
+                        },
+                        gold: {
+                            200: '#FCE590', 300: '#F7D96A', 400: '#F2C82E',
+                            500: '#FBC80C', 600: '#CEA200', 900: '#4B3B00'
+                        },
+                        grape: {
+                            200: '#C3ADD9', 300: '#A17BC7', 400: '#481877',
+                            500: '#2F0558', 600: '#250148', 900: '#1A032F'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'sans-serif']
+                    }
+                }
+            }
+        };
+    </script>
+
+    <style>
+        /* Resplandor de marca: coral arriba a la izquierda, morado corporativo a la derecha. */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background:
+                radial-gradient(60rem 30rem at 12% -10%, rgba(237, 85, 67, 0.10), transparent 60%),
+                radial-gradient(55rem 28rem at 95% 0%, rgba(47, 5, 88, 0.55), transparent 65%);
+            z-index: 0;
+        }
+        body > * { position: relative; z-index: 1; }
+
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #232323; border-radius: 9999px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3A3A3A; }
+
+        ::selection { background: #ED5543; color: #020202; }
+
+        input::placeholder, textarea::placeholder { color: #52525B; }
+    </style>
 </head>
-<body class="bg-gray-50 h-screen flex flex-col font-sans text-gray-800 overflow-hidden">
+<body class="bg-night text-ink h-screen flex flex-col font-sans antialiased overflow-hidden">
 
     <!-- Aviso: la app usa módulos ES6, que no cargan con el protocolo file:// -->
-    <div id="file-warning" style="display:none" class="bg-rose-600 text-white text-sm px-6 py-3 shrink-0">
+    <div id="file-warning" style="display:none" class="bg-coral-500 text-night text-sm font-medium px-6 py-3 shrink-0">
         Estás abriendo el archivo directamente (<code>file://</code>) y los módulos ES6 no cargan así.
-        Levanta un servidor local: <code class="bg-rose-700 px-1 rounded">npx serve</code> en la carpeta del proyecto, o usa la URL de GitHub Pages.
+        Levanta un servidor local: <code class="bg-coral-900 text-coral-200 px-1.5 py-0.5 rounded">npx serve</code> en la carpeta del proyecto, o usa la URL de GitHub Pages.
     </div>
     <noscript>
-        <div class="bg-rose-600 text-white text-sm px-6 py-3">Esta aplicación necesita JavaScript habilitado.</div>
+        <div class="bg-coral-500 text-night text-sm font-medium px-6 py-3">Esta aplicación necesita JavaScript habilitado.</div>
     </noscript>
     <script>
         if (location.protocol === 'file:') {
@@ -22,19 +90,24 @@
         }
     </script>
 
-    <!-- Navbar & Setup -->
-    <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0 gap-4">
-        <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 shrink-0">
-            <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-            EduLead AI
-        </h1>
+    <!-- Barra superior -->
+    <header class="bg-surface/80 backdrop-blur border-b border-line px-6 py-3.5 flex justify-between items-center shrink-0 gap-4">
+        <div class="flex items-center gap-3 shrink-0">
+            <span class="grid place-items-center w-9 h-9 rounded-lg bg-coral-500 text-night shadow-lg shadow-coral-900/40">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+            </span>
+            <div class="leading-tight">
+                <h1 class="text-lg font-extrabold tracking-tight">EduLead <span class="text-coral-500">AI</span></h1>
+                <p class="text-[11px] text-ink-faint font-medium tracking-wide uppercase">Lead scoring con Gemini</p>
+            </div>
+        </div>
 
         <!-- Enganche: Input de API Key (la clave nunca se commitea, vive en sessionStorage) -->
         <div id="api-key-container" class="flex items-center gap-2">
-            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 hover:underline whitespace-nowrap">Obtener API Key</a>
-            <input type="password" id="api-key-input" autocomplete="off" placeholder="Ingresa tu Gemini API Key..." class="text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64">
-            <button type="button" id="save-key-btn" class="text-sm bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-700 transition">Guardar</button>
-            <span id="api-key-status" class="text-xs text-gray-400 whitespace-nowrap">Sin clave</span>
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="text-xs text-grape-300 hover:text-ink underline underline-offset-2 whitespace-nowrap transition">Obtener API Key</a>
+            <input type="password" id="api-key-input" autocomplete="off" placeholder="Pega tu Gemini API Key..." class="text-sm bg-raised border border-line rounded-lg px-3 py-2 text-ink focus:outline-none focus:ring-2 focus:ring-coral-500 focus:border-coral-500 w-64 transition">
+            <button type="button" id="save-key-btn" class="text-sm font-semibold bg-ink text-night px-3.5 py-2 rounded-lg hover:bg-coral-500 transition">Guardar</button>
+            <span id="api-key-status" class="text-xs text-ink-faint whitespace-nowrap">Sin clave</span>
         </div>
     </header>
 
@@ -42,80 +115,94 @@
     <div id="toast-container" class="fixed top-20 right-6 z-50 flex flex-col gap-2"></div>
 
     <main class="flex-1 flex overflow-hidden">
-        <!-- Sidebar: Formulario -->
-        <aside class="w-80 bg-white border-r border-gray-200 p-6 flex flex-col shrink-0 overflow-y-auto">
-            <h2 id="form-title" class="font-semibold text-lg mb-4">Nuevo Prospecto</h2>
+        <!-- Panel lateral: formulario -->
+        <aside class="w-80 bg-surface border-r border-line p-6 flex flex-col shrink-0 overflow-y-auto">
+            <h2 id="form-title" class="font-bold text-lg text-ink mb-5">Nuevo Prospecto</h2>
 
             <!-- Enganche: Contenedor del formulario -->
             <form id="lead-form" class="flex flex-col gap-4" novalidate>
                 <input type="hidden" id="lead-id">
 
                 <div>
-                    <label for="lead-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-                    <input type="text" id="lead-name" required maxlength="80" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <label for="lead-name" class="block text-xs font-semibold uppercase tracking-wider text-ink-faint mb-1.5">Nombre</label>
+                    <input type="text" id="lead-name" required maxlength="80" class="w-full bg-raised border border-line rounded-lg px-3 py-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-coral-500 focus:border-coral-500 transition">
                 </div>
 
                 <div>
-                    <label for="lead-course" class="block text-sm font-medium text-gray-700 mb-1">Curso de interés</label>
-                    <input type="text" id="lead-course" required maxlength="80" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <label for="lead-course" class="block text-xs font-semibold uppercase tracking-wider text-ink-faint mb-1.5">Curso de interés</label>
+                    <input type="text" id="lead-course" required maxlength="80" class="w-full bg-raised border border-line rounded-lg px-3 py-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-coral-500 focus:border-coral-500 transition">
                 </div>
 
                 <div>
-                    <label for="lead-notes" class="block text-sm font-medium text-gray-700 mb-1">Notas de interacción</label>
-                    <textarea id="lead-notes" required rows="5" maxlength="2000" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ej. Presupuesto, urgencia, dudas..."></textarea>
-                    <p class="text-xs text-gray-400 mt-1">Mínimo 10 caracteres para poder analizar con IA.</p>
+                    <label for="lead-notes" class="block text-xs font-semibold uppercase tracking-wider text-ink-faint mb-1.5">Notas de interacción</label>
+                    <textarea id="lead-notes" required rows="5" maxlength="2000" class="w-full bg-raised border border-line rounded-lg px-3 py-2.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-coral-500 focus:border-coral-500 transition resize-none" placeholder="Presupuesto, urgencia, dudas, quién decide..."></textarea>
+                    <p class="text-[11px] text-ink-faint mt-1.5">Mínimo 10 caracteres para poder analizar con IA.</p>
                 </div>
 
-                <button type="submit" id="submit-btn" class="mt-2 bg-indigo-600 text-white font-medium px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center justify-center gap-2">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                <button type="submit" id="submit-btn" class="mt-1 bg-coral-500 text-night font-bold px-4 py-2.5 rounded-lg hover:bg-coral-400 active:bg-coral-600 transition flex items-center justify-center gap-2 shadow-lg shadow-coral-900/40">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"></path></svg>
                     <span id="submit-label">Guardar Lead</span>
                 </button>
 
-                <button type="button" id="cancel-edit-btn" class="hidden text-sm text-gray-500 hover:text-gray-800 underline">
+                <button type="button" id="cancel-edit-btn" class="hidden text-sm text-ink-muted hover:text-ink underline underline-offset-2 transition">
                     Cancelar edición
                 </button>
             </form>
 
-            <div class="mt-auto pt-6 border-t border-gray-100 mt-6">
-                <button type="button" id="seed-btn" class="w-full text-sm border border-gray-300 text-gray-600 px-3 py-2 rounded-md hover:bg-gray-50 transition">
-                    Cargar 3 leads de ejemplo
-                </button>
-                <p class="text-xs text-gray-400 mt-2">Los datos se guardan solo en este navegador (localStorage).</p>
+            <div class="mt-auto pt-6">
+                <div class="border-t border-line pt-5">
+                    <button type="button" id="seed-btn" class="w-full text-sm font-semibold border border-grape-400 text-grape-300 px-3 py-2.5 rounded-lg hover:bg-grape-500 hover:text-ink hover:border-grape-500 transition">
+                        Cargar 3 leads de ejemplo
+                    </button>
+                    <p class="text-[11px] text-ink-faint mt-2.5 leading-relaxed">Los datos se guardan solo en este navegador, en <code class="text-grape-300">localStorage</code>.</p>
+                </div>
             </div>
         </aside>
 
-        <!-- Kanban Board -->
+        <!-- Tablero Kanban -->
         <section class="flex-1 p-6 overflow-x-auto">
             <div id="board" class="flex gap-4 h-full min-w-max">
 
                 <!-- Columna: Sin calificar -->
-                <div class="w-80 flex flex-col bg-slate-100 rounded-xl overflow-hidden">
-                    <div class="p-3 border-b border-slate-200 font-semibold text-slate-700 flex justify-between items-center">
-                        Sin calificar <span id="count-unscored" class="bg-slate-200 text-slate-600 text-xs px-2 py-1 rounded-full">0</span>
+                <div class="w-80 flex flex-col bg-surface border border-line rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 border-b border-line flex justify-between items-center">
+                        <span class="flex items-center gap-2 font-bold text-sm text-ink-muted">
+                            <span class="w-2 h-2 rounded-full bg-ink-faint"></span> Sin calificar
+                        </span>
+                        <span id="count-unscored" class="bg-raised text-ink-muted text-xs font-bold px-2 py-0.5 rounded-full tabular-nums">0</span>
                     </div>
                     <div id="col-unscored" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
-                <!-- Columna: Baja -->
-                <div class="w-80 flex flex-col bg-rose-50 rounded-xl overflow-hidden">
-                    <div class="p-3 border-b border-rose-100 font-semibold text-rose-800 flex justify-between items-center">
-                        Prioridad Baja <span id="count-low" class="bg-rose-200 text-rose-700 text-xs px-2 py-1 rounded-full">0</span>
+                <!-- Columna: Prioridad Baja -->
+                <div class="w-80 flex flex-col bg-surface border border-line rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 border-b border-line flex justify-between items-center">
+                        <span class="flex items-center gap-2 font-bold text-sm text-grape-300">
+                            <span class="w-2 h-2 rounded-full bg-grape-300"></span> Prioridad Baja
+                        </span>
+                        <span id="count-low" class="bg-grape-900 text-grape-200 text-xs font-bold px-2 py-0.5 rounded-full tabular-nums">0</span>
                     </div>
                     <div id="col-low" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
-                <!-- Columna: Media -->
-                <div class="w-80 flex flex-col bg-amber-50 rounded-xl overflow-hidden">
-                    <div class="p-3 border-b border-amber-100 font-semibold text-amber-800 flex justify-between items-center">
-                        Prioridad Media <span id="count-medium" class="bg-amber-200 text-amber-700 text-xs px-2 py-1 rounded-full">0</span>
+                <!-- Columna: Prioridad Media -->
+                <div class="w-80 flex flex-col bg-surface border border-line rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 border-b border-line flex justify-between items-center">
+                        <span class="flex items-center gap-2 font-bold text-sm text-gold-500">
+                            <span class="w-2 h-2 rounded-full bg-gold-500"></span> Prioridad Media
+                        </span>
+                        <span id="count-medium" class="bg-gold-900 text-gold-300 text-xs font-bold px-2 py-0.5 rounded-full tabular-nums">0</span>
                     </div>
                     <div id="col-medium" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
-                <!-- Columna: Alta -->
-                <div class="w-80 flex flex-col bg-emerald-50 rounded-xl overflow-hidden">
-                    <div class="p-3 border-b border-emerald-100 font-semibold text-emerald-800 flex justify-between items-center">
-                        Prioridad Alta <span id="count-high" class="bg-emerald-200 text-emerald-700 text-xs px-2 py-1 rounded-full">0</span>
+                <!-- Columna: Prioridad Alta -->
+                <div class="w-80 flex flex-col bg-surface border border-coral-900 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 border-b border-coral-900 flex justify-between items-center">
+                        <span class="flex items-center gap-2 font-bold text-sm text-coral-500">
+                            <span class="w-2 h-2 rounded-full bg-coral-500 animate-pulse"></span> Prioridad Alta
+                        </span>
+                        <span id="count-high" class="bg-coral-900 text-coral-200 text-xs font-bold px-2 py-0.5 rounded-full tabular-nums">0</span>
                     </div>
                     <div id="col-high" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
