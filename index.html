@@ -3,22 +3,38 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EduLead AI - CRM Estático</title>
+    <title>EduLead AI - CRM Estático con Lead Scoring</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-50 h-screen flex flex-col font-sans text-gray-800 overflow-hidden">
 
+    <!-- Aviso: la app usa módulos ES6, que no cargan con el protocolo file:// -->
+    <div id="file-warning" style="display:none" class="bg-rose-600 text-white text-sm px-6 py-3 shrink-0">
+        Estás abriendo el archivo directamente (<code>file://</code>) y los módulos ES6 no cargan así.
+        Levanta un servidor local: <code class="bg-rose-700 px-1 rounded">npx serve</code> en la carpeta del proyecto, o usa la URL de GitHub Pages.
+    </div>
+    <noscript>
+        <div class="bg-rose-600 text-white text-sm px-6 py-3">Esta aplicación necesita JavaScript habilitado.</div>
+    </noscript>
+    <script>
+        if (location.protocol === 'file:') {
+            document.getElementById('file-warning').style.display = 'block';
+        }
+    </script>
+
     <!-- Navbar & Setup -->
-    <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0">
-        <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2">
+    <header class="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0 gap-4">
+        <h1 class="text-xl font-bold text-slate-800 flex items-center gap-2 shrink-0">
             <svg class="w-6 h-6 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
             EduLead AI
         </h1>
-        
-        <!-- Enganche: Input de API Key -->
+
+        <!-- Enganche: Input de API Key (la clave nunca se commitea, vive en sessionStorage) -->
         <div id="api-key-container" class="flex items-center gap-2">
-            <input type="password" id="api-key-input" placeholder="Ingresa tu Gemini API Key..." class="text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64">
-            <button id="save-key-btn" class="text-sm bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-700 transition">Guardar</button>
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="text-xs text-indigo-600 hover:underline whitespace-nowrap">Obtener API Key</a>
+            <input type="password" id="api-key-input" autocomplete="off" placeholder="Ingresa tu Gemini API Key..." class="text-sm border border-gray-300 rounded-md px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 w-64">
+            <button type="button" id="save-key-btn" class="text-sm bg-slate-800 text-white px-3 py-1.5 rounded-md hover:bg-slate-700 transition">Guardar</button>
+            <span id="api-key-status" class="text-xs text-gray-400 whitespace-nowrap">Sin clave</span>
         </div>
     </header>
 
@@ -28,146 +44,86 @@
     <main class="flex-1 flex overflow-hidden">
         <!-- Sidebar: Formulario -->
         <aside class="w-80 bg-white border-r border-gray-200 p-6 flex flex-col shrink-0 overflow-y-auto">
-            <h2 class="font-semibold text-lg mb-4">Nuevo Prospecto</h2>
+            <h2 id="form-title" class="font-semibold text-lg mb-4">Nuevo Prospecto</h2>
+
             <!-- Enganche: Contenedor del formulario -->
-            <form id="lead-form" class="flex flex-col gap-4">
+            <form id="lead-form" class="flex flex-col gap-4" novalidate>
                 <input type="hidden" id="lead-id">
-                
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
-                    <input type="text" id="lead-name" required class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <label for="lead-name" class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+                    <input type="text" id="lead-name" required maxlength="80" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 </div>
-                
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Curso de interés</label>
-                    <input type="text" id="lead-course" required class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                    <label for="lead-course" class="block text-sm font-medium text-gray-700 mb-1">Curso de interés</label>
+                    <input type="text" id="lead-course" required maxlength="80" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
                 </div>
-                
+
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">Notas de interacción</label>
-                    <textarea id="lead-notes" required rows="4" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ej. Presupuesto, urgencia, dudas..."></textarea>
+                    <label for="lead-notes" class="block text-sm font-medium text-gray-700 mb-1">Notas de interacción</label>
+                    <textarea id="lead-notes" required rows="5" maxlength="2000" class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Ej. Presupuesto, urgencia, dudas..."></textarea>
+                    <p class="text-xs text-gray-400 mt-1">Mínimo 10 caracteres para poder analizar con IA.</p>
                 </div>
-                
-                <button type="submit" class="mt-2 bg-indigo-600 text-white font-medium px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center justify-center gap-2">
-                    <!-- Icono guardado en JS, maquetado aquí para visualización -->
+
+                <button type="submit" id="submit-btn" class="mt-2 bg-indigo-600 text-white font-medium px-4 py-2 rounded-md hover:bg-indigo-700 transition flex items-center justify-center gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                    Guardar Lead
+                    <span id="submit-label">Guardar Lead</span>
+                </button>
+
+                <button type="button" id="cancel-edit-btn" class="hidden text-sm text-gray-500 hover:text-gray-800 underline">
+                    Cancelar edición
                 </button>
             </form>
+
+            <div class="mt-auto pt-6 border-t border-gray-100 mt-6">
+                <button type="button" id="seed-btn" class="w-full text-sm border border-gray-300 text-gray-600 px-3 py-2 rounded-md hover:bg-gray-50 transition">
+                    Cargar 3 leads de ejemplo
+                </button>
+                <p class="text-xs text-gray-400 mt-2">Los datos se guardan solo en este navegador (localStorage).</p>
+            </div>
         </aside>
 
         <!-- Kanban Board -->
         <section class="flex-1 p-6 overflow-x-auto">
-            <div class="flex gap-4 h-full min-w-max">
-                
+            <div id="board" class="flex gap-4 h-full min-w-max">
+
                 <!-- Columna: Sin calificar -->
-                <!-- Enganche: Contenedor columna unscored -->
-                <div class="w-80 flex flex-col bg-slate-100 rounded-xl">
+                <div class="w-80 flex flex-col bg-slate-100 rounded-xl overflow-hidden">
                     <div class="p-3 border-b border-slate-200 font-semibold text-slate-700 flex justify-between items-center">
-                        Sin calificar <span class="bg-slate-200 text-slate-600 text-xs px-2 py-1 rounded-full">1</span>
+                        Sin calificar <span id="count-unscored" class="bg-slate-200 text-slate-600 text-xs px-2 py-1 rounded-full">0</span>
                     </div>
-                    <div id="col-unscored" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
-                        <!-- MOCK DATA: Card Sin Calificar -->
-                        <div class="bg-white shadow-sm rounded-lg p-4 border-l-4 border-slate-400 group">
-                            <div class="flex justify-between items-start mb-2">
-                                <h3 class="font-bold text-gray-900">Juan Pérez</h3>
-                                <div class="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1">
-                                    <button class="text-gray-400 hover:text-indigo-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
-                                    <button class="text-gray-400 hover:text-rose-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                                </div>
-                            </div>
-                            <p class="text-xs text-gray-500 mb-2 font-medium">Bootcamp Data Science</p>
-                            <p class="text-sm text-gray-600 line-clamp-3 mb-3">Preguntó por el temario. No sabe si empezar ahora o el próximo año.</p>
-                            <span class="inline-block bg-slate-200 text-slate-700 text-xs px-2 py-1 rounded font-medium mb-3">Score: --</span>
-                            <button class="w-full bg-slate-800 text-white text-sm py-1.5 rounded flex items-center justify-center gap-1 hover:bg-slate-700 transition">
-                                <svg class="w-4 h-4 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
-                                Analizar con IA
-                            </button>
-                        </div>
-                    </div>
+                    <div id="col-unscored" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
                 <!-- Columna: Baja -->
-                <!-- Enganche: Contenedor columna low -->
-                <div class="w-80 flex flex-col bg-rose-50 rounded-xl">
+                <div class="w-80 flex flex-col bg-rose-50 rounded-xl overflow-hidden">
                     <div class="p-3 border-b border-rose-100 font-semibold text-rose-800 flex justify-between items-center">
-                        Prioridad Baja <span class="bg-rose-200 text-rose-700 text-xs px-2 py-1 rounded-full">1</span>
+                        Prioridad Baja <span id="count-low" class="bg-rose-200 text-rose-700 text-xs px-2 py-1 rounded-full">0</span>
                     </div>
-                    <div id="col-low" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
-                        <!-- MOCK DATA: Card Baja -->
-                        <div class="bg-white shadow-sm rounded-lg p-4 border-l-4 border-rose-400 group">
-                            <div class="flex justify-between items-start mb-2">
-                                <h3 class="font-bold text-gray-900">Camila Rojas</h3>
-                                <div class="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1">
-                                    <button class="text-gray-400 hover:text-indigo-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
-                                    <button class="text-gray-400 hover:text-rose-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                                </div>
-                            </div>
-                            <p class="text-xs text-gray-500 mb-2 font-medium">Diseño UX/UI</p>
-                            <span class="inline-block bg-rose-100 text-rose-800 text-xs px-2 py-1 rounded font-bold mb-2">Score: 25</span>
-                            <p class="text-sm text-gray-600 italic bg-gray-50 p-2 rounded border border-gray-100 text-xs">"Búsqueda de material gratuito, sin intención de compra."</p>
-                        </div>
-                    </div>
+                    <div id="col-low" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
                 <!-- Columna: Media -->
-                <!-- Enganche: Contenedor columna medium -->
-                <div class="w-80 flex flex-col bg-amber-50 rounded-xl">
+                <div class="w-80 flex flex-col bg-amber-50 rounded-xl overflow-hidden">
                     <div class="p-3 border-b border-amber-100 font-semibold text-amber-800 flex justify-between items-center">
-                        Prioridad Media <span class="bg-amber-200 text-amber-700 text-xs px-2 py-1 rounded-full">1</span>
+                        Prioridad Media <span id="count-medium" class="bg-amber-200 text-amber-700 text-xs px-2 py-1 rounded-full">0</span>
                     </div>
-                    <div id="col-medium" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
-                        <!-- MOCK DATA: Card Media -->
-                        <div class="bg-white shadow-sm rounded-lg p-4 border-l-4 border-amber-400 group">
-                            <div class="flex justify-between items-start mb-2">
-                                <h3 class="font-bold text-gray-900">Diego Torres</h3>
-                                <div class="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1">
-                                    <button class="text-gray-400 hover:text-indigo-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
-                                    <button class="text-gray-400 hover:text-rose-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                                </div>
-                            </div>
-                            <p class="text-xs text-gray-500 mb-2 font-medium">Bootcamp Fullstack</p>
-                            <span class="inline-block bg-amber-100 text-amber-800 text-xs px-2 py-1 rounded font-bold mb-2">Score: 65</span>
-                            <p class="text-sm text-gray-600 italic bg-gray-50 p-2 rounded border border-gray-100 text-xs">"Interés genuino pero sujeto a validación de horarios laborales."</p>
-                        </div>
-                    </div>
+                    <div id="col-medium" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
                 <!-- Columna: Alta -->
-                <!-- Enganche: Contenedor columna high -->
-                <div class="w-80 flex flex-col bg-emerald-50 rounded-xl">
+                <div class="w-80 flex flex-col bg-emerald-50 rounded-xl overflow-hidden">
                     <div class="p-3 border-b border-emerald-100 font-semibold text-emerald-800 flex justify-between items-center">
-                        Prioridad Alta <span class="bg-emerald-200 text-emerald-700 text-xs px-2 py-1 rounded-full">1</span>
+                        Prioridad Alta <span id="count-high" class="bg-emerald-200 text-emerald-700 text-xs px-2 py-1 rounded-full">0</span>
                     </div>
-                    <div id="col-high" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3">
-                        <!-- MOCK DATA: Card Alta -->
-                        <div class="bg-white shadow-sm rounded-lg p-4 border-l-4 border-emerald-500 group">
-                            <div class="flex justify-between items-start mb-2">
-                                <h3 class="font-bold text-gray-900">Ana Silva</h3>
-                                <div class="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1">
-                                    <button class="text-gray-400 hover:text-indigo-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg></button>
-                                    <button class="text-gray-400 hover:text-rose-600 p-1"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg></button>
-                                </div>
-                            </div>
-                            <p class="text-xs text-gray-500 mb-2 font-medium">Cloud Architecture</p>
-                            <span class="inline-block bg-emerald-100 text-emerald-800 text-xs px-2 py-1 rounded font-bold mb-2">Score: 92</span>
-                            <p class="text-sm text-gray-600 italic bg-gray-50 p-2 rounded border border-gray-100 text-xs mb-3">"Presupuesto aprobado por su empresa, necesita iniciar urgente este mes."</p>
-                            
-                            <!-- Estado: Notas modificadas (Ejemplo de re-calificación habilitada) -->
-                            <span class="block text-xs text-amber-600 font-medium mb-2">⚠️ Notas modificadas</span>
-                            <button class="w-full bg-slate-800 text-white text-sm py-1.5 rounded flex items-center justify-center gap-1 hover:bg-slate-700 transition">
-                                <svg class="w-4 h-4 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>
-                                Re-analizar
-                            </button>
-                        </div>
-                    </div>
+                    <div id="col-high" class="p-3 flex-1 overflow-y-auto flex flex-col gap-3"></div>
                 </div>
 
             </div>
         </section>
     </main>
 
-    <!-- App Scripts (Type module para ES6) -->
     <script type="module" src="js/app.js"></script>
 </body>
 </html>
