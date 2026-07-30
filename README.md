@@ -80,8 +80,14 @@ y un `responseSchema` que fuerza exactamente estos campos:
 
 Detalles de implementación:
 
-- **Modelo:** `gemini-3.5-flash`, con reintento automático en `gemini-flash-latest` si el
-  catálogo cambia. `gemini-1.5-flash` está dado de baja y devuelve 404.
+- **Cadena de modelos:** `gemini-3.5-flash` → `gemini-3.1-flash-lite` → `gemini-flash-latest`.
+  El primero da mejor calidad; el segundo es más liviano y suele seguir disponible cuando el
+  flagship devuelve 503; el tercero es un alias de respaldo si el catálogo cambia.
+  `gemini-1.5-flash` está dado de baja y devuelve 404.
+- **Reintentos:** ante errores transitorios (429, 5xx, timeout, red) se reintenta hasta 3 veces
+  por modelo con backoff exponencial y jitter (~0,8 s, 1,6 s), y si el modelo sigue caído se pasa
+  al siguiente de la cadena. Los errores de cliente (400, 403, JSON inválido) fallan de inmediato,
+  sin reintentar. Se ajusta en `retryConfig`, dentro de `js/gemini.js`.
 - **Autenticación:** la clave va en el header `x-goog-api-key`, no en la query string.
 - **Coherencia:** la prioridad se deriva del `score` (≥75 Alta, ≥40 Media, resto Baja) para
   que el badge nunca contradiga la columna, aunque el modelo responda algo distinto.
@@ -93,7 +99,8 @@ Detalles de implementación:
 | --- | --- |
 | Falta API Key | Ingresa tu API Key de Gemini arriba a la derecha. |
 | Key inválida (401/403) | API Key inválida, expirada o sin permisos. |
-| Cuota superada (429) | Cuota superada (429). Espera un minuto y vuelve a intentar. |
+| Cuota superada (429) | Se reintenta con backoff; si persiste, avisa de esperar un minuto. |
+| Modelo sobrecargado (503) | Se reintenta y se cambia de modelo; si persiste, avisa de sobrecarga. |
 | Modelo inexistente (404) | El modelo de Gemini no está disponible para esta API Key. |
 | Respuesta no-JSON | La IA devolvió una respuesta que no es JSON válido. |
 | Esquema inesperado | La IA respondió con un formato inesperado. |
