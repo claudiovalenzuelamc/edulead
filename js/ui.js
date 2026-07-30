@@ -11,7 +11,8 @@ export const ICONS = {
     sparkles: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path></svg>`,
     trash: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>`,
     pencil: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>`,
-    spinner: `<svg class="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`
+    spinner: `<svg class="animate-spin w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>`,
+    message: `<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>`
 };
 
 /**
@@ -91,6 +92,97 @@ export function showToast(message, type = 'info') {
     }, 4000);
 }
 
+/* ------------------------------ Panel de métricas ------------------------------ */
+
+function kpiCard(label, value, hint, accent = 'text-ink') {
+    return `
+        <div class="bg-raised border border-line rounded-xl px-4 py-3">
+            <p class="text-[11px] font-semibold uppercase tracking-wider text-ink-faint">${escapeHTML(label)}</p>
+            <p class="text-2xl font-extrabold tabular-nums leading-tight mt-1 ${accent}">${escapeHTML(value)}</p>
+            <p class="text-[11px] text-ink-faint mt-0.5">${escapeHTML(hint)}</p>
+        </div>
+    `;
+}
+
+/**
+ * Panel de indicadores del embudo.
+ * @param {object} metrics salida de computeMetrics
+ * @param {Array<{prioridad:string, cantidad:number, porcentaje:number}>} segments
+ */
+export function renderMetrics(metrics, segments) {
+    if (!metrics.total) {
+        return `<div class="bg-surface border border-dashed border-line rounded-xl px-5 py-4 text-xs text-ink-faint text-center">
+                    Registra tu primer prospecto y aquí verás el estado de tu cartera.
+                </div>`;
+    }
+
+    const barra = segments.length
+        ? `<div class="flex h-2.5 rounded-full overflow-hidden bg-raised">
+               ${segments.map((s) => {
+                   const styles = PRIORITY_STYLES[s.prioridad] || PRIORITY_STYLES['Sin calificar'];
+                   return `<div class="${styles.dot}" style="width:${s.porcentaje}%" title="${escapeHTML(s.prioridad)}: ${s.cantidad}"></div>`;
+               }).join('')}
+           </div>
+           <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2.5">
+               ${segments.map((s) => {
+                   const styles = PRIORITY_STYLES[s.prioridad] || PRIORITY_STYLES['Sin calificar'];
+                   return `<span class="flex items-center gap-1.5 text-[11px] text-ink-muted">
+                               <span class="w-2 h-2 rounded-full ${styles.dot}"></span>
+                               ${escapeHTML(s.prioridad)} · <span class="tabular-nums font-semibold">${s.cantidad}</span>
+                           </span>`;
+               }).join('')}
+           </div>`
+        : `<p class="text-[11px] text-ink-faint">Todavía no hay leads calificados: analiza uno para ver la distribución.</p>`;
+
+    const siguientes = metrics.siguientes.length
+        ? metrics.siguientes.map((lead) => {
+              const styles = PRIORITY_STYLES[lead.probabilidad] || PRIORITY_STYLES['Sin calificar'];
+              return `<button type="button" data-action="focus-lead" data-id="${escapeHTML(lead.id)}"
+                          class="flex items-center gap-2 bg-raised border border-line hover:border-coral-500 rounded-lg pl-2 pr-3 py-1.5 transition text-left">
+                          <span class="w-1.5 h-1.5 rounded-full ${styles.dot}"></span>
+                          <span class="text-xs font-semibold text-ink">${escapeHTML(lead.nombre)}</span>
+                          <span class="text-[11px] ${styles.accent} tabular-nums font-bold">${lead.score}</span>
+                      </button>`;
+          }).join('')
+        : `<span class="text-[11px] text-ink-faint">Nadie en espera: todos los leads calificados ya tienen mensaje.</span>`;
+
+    return `
+        <div class="bg-surface border border-line rounded-xl p-5 flex flex-col gap-4">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                ${kpiCard('Prospectos', String(metrics.total), `${metrics.sinCalificar} sin calificar`)}
+                ${kpiCard('Cobertura IA', `${metrics.cobertura}%`, `${metrics.calificados} calificados`, 'text-grape-300')}
+                ${kpiCard('Score promedio', metrics.scorePromedio === null ? '--' : String(metrics.scorePromedio), 'sobre 100', 'text-gold-500')}
+                ${kpiCard('Por contactar', String(metrics.pendientesContacto), `${metrics.contactados} con mensaje listo`, 'text-coral-500')}
+            </div>
+
+            <div>
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-ink-faint mb-2">Distribución del embudo</p>
+                ${barra}
+            </div>
+
+            <div>
+                <p class="text-[11px] font-semibold uppercase tracking-wider text-ink-faint mb-2">Contactar ahora</p>
+                <div class="flex flex-wrap gap-2">${siguientes}</div>
+            </div>
+        </div>
+    `;
+}
+
+/** Botones tipo segmented control para el canal y el tono del mensaje. */
+export function renderSegmented(options, selected, group) {
+    return options.map((option) => {
+        const activo = option === selected;
+        const clases = activo
+            ? 'bg-coral-500 text-night border-coral-500'
+            : 'bg-raised text-ink-muted border-line hover:text-ink hover:border-ink-faint';
+        return `<button type="button" data-group="${escapeHTML(group)}" data-value="${escapeHTML(option)}"
+                    aria-pressed="${activo}"
+                    class="flex-1 text-xs font-semibold px-2.5 py-2 rounded-lg border transition ${clases}">
+                    ${escapeHTML(option)}
+                </button>`;
+    }).join('');
+}
+
 export function renderEmptyState(text) {
     return `<p class="text-xs text-ink-faint text-center py-8 px-4 border border-dashed border-line rounded-lg">${escapeHTML(text)}</p>`;
 }
@@ -125,6 +217,16 @@ export function createCardHTML(lead) {
            </button>`
         : '';
 
+    // Primer contacto: solo tiene sentido ofrecerlo cuando el lead ya está priorizado.
+    const outreachBlock = calificado && !lead.notasModificadas
+        ? `<button type="button" data-action="outreach" class="w-full mt-2 ${lead.mensaje
+                ? 'bg-grape-900 border border-grape-400 text-grape-200 hover:bg-grape-500 hover:text-ink'
+                : 'bg-raised border border-line text-ink hover:bg-gold-500 hover:text-night hover:border-gold-500'
+           } text-sm font-semibold py-2 rounded-lg flex items-center justify-center gap-1.5 transition">
+               ${ICONS.message}<span>${lead.mensaje ? 'Ver mensaje' : 'Redactar contacto'}</span>
+           </button>`
+        : '';
+
     const metaBlock = calificado && lead.vecesAnalizado > 1
         ? `<p class="text-[11px] text-ink-faint mt-2.5">Analizado ${lead.vecesAnalizado} veces</p>`
         : '';
@@ -142,6 +244,7 @@ export function createCardHTML(lead) {
             ${scoreBlock}
             ${warningBlock}
             ${analyzeBlock}
+            ${outreachBlock}
             ${metaBlock}
         </article>
     `;

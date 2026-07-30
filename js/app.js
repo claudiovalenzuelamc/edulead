@@ -1,13 +1,17 @@
 /**
- * Main App — orquestador. Conecta los eventos de la UI con Storage y el servicio de Gemini.
+ * Main App — orquestador. Conecta los eventos de la UI con Storage, métricas y el servicio de Gemini.
  */
 
 import {
     getLeads, getLeadById, saveLead, updateLead, deleteLead,
     seedDemoLeads, isStorageAvailable, StorageError
 } from './storage.js';
-import { createCardHTML, renderEmptyState, showToast, ICONS } from './ui.js';
-import { analyzeLeadWithGemini, getStoredApiKey, setStoredApiKey } from './gemini.js';
+import { computeMetrics, distributionSegments } from './metrics.js';
+import { createCardHTML, renderEmptyState, renderMetrics, renderSegmented, showToast, ICONS } from './ui.js';
+import {
+    analyzeLeadWithGemini, draftOutreachWithGemini,
+    getStoredApiKey, setStoredApiKey, CANALES, TONOS
+} from './gemini.js';
 
 /* ------------------------------ DOM ------------------------------ */
 
@@ -26,6 +30,23 @@ const saveKeyBtn = document.getElementById('save-key-btn');
 const apiKeyStatus = document.getElementById('api-key-status');
 
 const board = document.getElementById('board');
+const metricsPanel = document.getElementById('metrics');
+
+const modal = document.getElementById('outreach-modal');
+const modalLead = document.getElementById('outreach-lead');
+const modalCanal = document.getElementById('outreach-canal');
+const modalTono = document.getElementById('outreach-tono');
+const modalGenerate = document.getElementById('outreach-generate');
+const modalGenerateLabel = document.getElementById('outreach-generate-label');
+const modalOutput = document.getElementById('outreach-output');
+const modalSubjectRow = document.getElementById('outreach-subject-row');
+const modalSubject = document.getElementById('outreach-subject');
+const modalMessage = document.getElementById('outreach-message');
+const modalHook = document.getElementById('outreach-hook');
+const modalCopy = document.getElementById('outreach-copy');
+const modalSave = document.getElementById('outreach-save');
+const modalClose = document.getElementById('outreach-close');
+const modalStatus = document.getElementById('outreach-status');
 
 const columns = {
     unscored: document.getElementById('col-unscored'),
@@ -69,6 +90,9 @@ const ERROR_MESSAGES = {
 
 /** IDs de leads que están siendo analizados ahora mismo. */
 const analyzing = new Set();
+
+/** Estado del asistente de primer contacto. */
+const composer = { leadId: null, canal: 'WhatsApp', tono: 'Cercano', generando: false };
 
 /* ------------------------------ Errores ------------------------------ */
 
@@ -114,9 +138,10 @@ function resolveApiKey() {
 /* ------------------------------ Render ------------------------------ */
 
 function renderBoard() {
+    const leads = getLeads();
     const buckets = { unscored: [], Baja: [], Media: [], Alta: [] };
 
-    for (const lead of getLeads()) {
+    for (const lead of leads) {
         if (lead.estado === 'calificado' && buckets[lead.probabilidad]) {
             buckets[lead.probabilidad].push(lead);
         } else {
@@ -125,12 +150,15 @@ function renderBoard() {
     }
 
     for (const [key, column] of Object.entries(columns)) {
-        const leads = buckets[key];
-        column.innerHTML = leads.length
-            ? leads.map(createCardHTML).join('')
+        const grupo = buckets[key];
+        column.innerHTML = grupo.length
+            ? grupo.map(createCardHTML).join('')
             : renderEmptyState(EMPTY_TEXTS[key]);
-        counters[key].textContent = String(leads.length);
+        counters[key].textContent = String(grupo.length);
     }
+
+    const metrics = computeMetrics(leads);
+    metricsPanel.innerHTML = renderMetrics(metrics, distributionSegments(metrics));
 
     // Repinta el spinner de los leads que quedaron analizándose durante el re-render.
     for (const id of analyzing) {
@@ -223,6 +251,182 @@ seedBtn.addEventListener('click', () => {
     }
 });
 
+/* ------------------------------ Asistente de primer contacto ------------------------------ */
+
+function renderComposerControls() {
+    modalCanal.innerHTML = renderSegmented(CANALES, composer.canal, 'canal');
+    modalTono.innerHTML = renderSegmented(TONOS, composer.tono, 'tono');
+}
+
+function showDraft(draft) {
+    modalOutput.classList.remove('hidden');
+    modalOutput.classList.add('flex');
+    modalSubject.value = draft.asunto || '';
+    modalMessage.value = draft.mensaje || '';
+    modalHook.textContent = draft.gancho ? `Gancho usado: ${draft.gancho}` : '';
+    modalHook.classList.toggle('hidden', !draft.gancho);
+    modalSubjectRow.classList.toggle('hidden', draft.canal !== 'Email');
+    modalGenerateLabel.textContent = 'Volver a redactar';
+}
+
+function hideDraft() {
+    modalOutput.classList.add('hidden');
+    modalOutput.classList.remove('flex');
+    modalGenerateLabel.textContent = 'Redactar con IA';
+}
+
+function openComposer(lead) {
+    composer.leadId = lead.id;
+    composer.canal = lead.mensajeCanal || 'WhatsApp';
+    composer.tono = lead.mensajeTono || 'Cercano';
+
+    modalLead.textContent = `${lead.nombre} · ${lead.curso} · prioridad ${lead.probabilidad} (${lead.score}/100)`;
+    modalStatus.textContent = '';
+    renderComposerControls();
+
+    if (lead.mensaje) {
+        showDraft({
+            asunto: lead.mensajeAsunto,
+            mensaje: lead.mensaje,
+            gancho: lead.mensajeGancho,
+            canal: lead.mensajeCanal
+        });
+    } else {
+        hideDraft();
+    }
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    modalGenerate.focus();
+}
+
+function closeComposer() {
+    composer.leadId = null;
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+}
+
+modalClose.addEventListener('click', closeComposer);
+
+modal.addEventListener('click', (event) => {
+    if (event.target === modal) closeComposer();
+});
+
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !modal.classList.contains('hidden')) closeComposer();
+});
+
+for (const group of [modalCanal, modalTono]) {
+    group.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-value]');
+        if (!button) return;
+        composer[button.dataset.group] = button.dataset.value;
+        renderComposerControls();
+        // El asunto solo aplica a email.
+        if (!modalOutput.classList.contains('hidden')) {
+            modalSubjectRow.classList.toggle('hidden', composer.canal !== 'Email');
+        }
+    });
+}
+
+modalGenerate.addEventListener('click', async () => {
+    const lead = getLeadById(composer.leadId);
+    if (!lead) {
+        closeComposer();
+        return;
+    }
+
+    const apiKey = resolveApiKey();
+    if (!apiKey) {
+        showToast(ERROR_MESSAGES.API_KEY_MISSING, 'error');
+        return;
+    }
+
+    composer.generando = true;
+    modalGenerate.disabled = true;
+    modalGenerateLabel.textContent = 'Redactando...';
+    modalStatus.textContent = 'Gemini está escribiendo el mensaje.';
+
+    try {
+        const draft = await draftOutreachWithGemini(
+            lead,
+            { canal: composer.canal, tono: composer.tono },
+            apiKey,
+            {
+                onProgress: ({ switchingTo }) => {
+                    modalStatus.textContent = switchingTo
+                        ? 'Modelo sobrecargado, probando uno alternativo...'
+                        : 'Modelo sobrecargado, reintentando...';
+                }
+            }
+        );
+
+        updateLead(lead.id, {
+            mensaje: draft.mensaje,
+            mensajeAsunto: draft.asunto,
+            mensajeCanal: draft.canal,
+            mensajeTono: draft.tono,
+            mensajeGancho: draft.gancho,
+            mensajeEn: new Date().toISOString()
+        });
+
+        showDraft(draft);
+        modalStatus.textContent = `Redactado con ${draft.modelo}.`;
+        renderBoard();
+    } catch (error) {
+        reportError(error, 'No se pudo redactar el mensaje.');
+        modalStatus.textContent = 'No se pudo redactar. Revisa el aviso y vuelve a intentar.';
+        modalGenerateLabel.textContent = 'Redactar con IA';
+    } finally {
+        composer.generando = false;
+        modalGenerate.disabled = false;
+    }
+});
+
+/** Guarda las ediciones manuales que el vendedor haya hecho sobre el borrador. */
+function persistComposerEdits() {
+    if (!composer.leadId) return;
+    updateLead(composer.leadId, {
+        mensaje: modalMessage.value.trim(),
+        mensajeAsunto: modalSubject.value.trim(),
+        mensajeCanal: composer.canal,
+        mensajeTono: composer.tono
+    });
+}
+
+modalSave.addEventListener('click', () => {
+    try {
+        persistComposerEdits();
+        renderBoard();
+        showToast('Mensaje guardado en el lead.', 'success');
+    } catch (error) {
+        reportError(error, 'No se pudo guardar el mensaje.');
+    }
+    closeComposer();
+});
+
+modalCopy.addEventListener('click', async () => {
+    const texto = composer.canal === 'Email' && modalSubject.value.trim()
+        ? `${modalSubject.value.trim()}\n\n${modalMessage.value}`
+        : modalMessage.value;
+
+    try {
+        await navigator.clipboard.writeText(texto);
+        showToast('Mensaje copiado al portapapeles.', 'success');
+    } catch (error) {
+        // Sin permisos de portapapeles: al menos dejamos el texto seleccionado.
+        modalMessage.select();
+        showToast('No se pudo copiar solo: el texto quedó seleccionado.', 'warning');
+    }
+
+    try {
+        persistComposerEdits();
+        renderBoard();
+    } catch (error) {
+        reportError(error, 'No se pudo guardar el mensaje.');
+    }
+});
+
 /* ------------------------------ Acciones de las tarjetas ------------------------------ */
 /* Delegación de eventos: un solo listener para todo el tablero, sobrevive a los re-renders. */
 
@@ -248,6 +452,7 @@ board.addEventListener('click', async (event) => {
         try {
             deleteLead(id);
             if (inputId.value === id) exitEditMode();
+            if (composer.leadId === id) closeComposer();
             renderBoard();
             showToast('Prospecto eliminado.', 'info');
         } catch (error) {
@@ -258,6 +463,11 @@ board.addEventListener('click', async (event) => {
 
     if (action === 'edit') {
         enterEditMode(lead);
+        return;
+    }
+
+    if (action === 'outreach') {
+        openComposer(lead);
         return;
     }
 
@@ -299,6 +509,19 @@ board.addEventListener('click', async (event) => {
     }
 });
 
+/* Atajo del panel: "Contactar ahora" abre el asistente del lead elegido. */
+metricsPanel.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action="focus-lead"]');
+    if (!button) return;
+
+    const lead = getLeadById(button.dataset.id);
+    if (!lead) {
+        renderBoard();
+        return;
+    }
+    openComposer(lead);
+});
+
 /* ------------------------------ Arranque ------------------------------ */
 
 function init() {
@@ -309,6 +532,7 @@ function init() {
     const storedKey = getStoredApiKey();
     if (storedKey) apiKeyInput.value = storedKey;
     refreshApiKeyStatus();
+    renderComposerControls();
 
     try {
         renderBoard();

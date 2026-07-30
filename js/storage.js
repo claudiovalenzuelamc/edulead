@@ -41,9 +41,26 @@ function normalizeLead(lead) {
         notasModificadas: Boolean(lead.notasModificadas),
         vecesAnalizado: Number(lead.vecesAnalizado) || 0,
         analizadoEn: lead.analizadoEn ?? null,
+        // Primer contacto redactado con IA
+        mensaje: lead.mensaje ?? null,
+        mensajeAsunto: lead.mensajeAsunto ?? null,
+        mensajeCanal: lead.mensajeCanal ?? null,
+        mensajeTono: lead.mensajeTono ?? null,
+        mensajeGancho: lead.mensajeGancho ?? null,
+        mensajeEn: lead.mensajeEn ?? null,
         createdAt: Number(lead.createdAt) || Date.now()
     };
 }
+
+/** Campos del borrador de contacto, para poder limpiarlos de una sola vez. */
+const CAMPOS_MENSAJE = {
+    mensaje: null,
+    mensajeAsunto: null,
+    mensajeCanal: null,
+    mensajeTono: null,
+    mensajeGancho: null,
+    mensajeEn: null
+};
 
 function readRaw() {
     let raw;
@@ -126,6 +143,11 @@ export function updateLead(id, updates) {
     const notasCambiaron = typeof patch.notas === 'string' && patch.notas !== current.notas;
     if (notasCambiaron && current.estado === 'calificado' && patch.notasModificadas === undefined) {
         patch.notasModificadas = true;
+    }
+
+    // Si cambian las notas, el borrador de contacto queda obsoleto: citaba las notas viejas.
+    if (notasCambiaron && current.mensaje && patch.mensaje === undefined) {
+        Object.assign(patch, CAMPOS_MENSAJE);
     }
 
     leads[index] = normalizeLead({ ...current, ...patch });
