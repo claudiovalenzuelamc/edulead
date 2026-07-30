@@ -1,0 +1,48 @@
+/* ==========================================================================
+   EduLead AI - Estilos Personalizados y Ajustes de UX
+   ========================================================================== */
+
+/* 1. Scrollbars personalizados para las columnas del Kanban */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.03);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 8px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* 2. Animación de carga para tarjetas en proceso de análisis */
+@keyframes pulse-card {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(0.99);
+  }
+}
+
+.analyzing-card {
+  animation: pulse-card 1.2s infinite ease-in-out;
+  pointer-events: none;
+}
+
+/* 3. Ajustes de legibilidad para texto largo en tarjetas */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
