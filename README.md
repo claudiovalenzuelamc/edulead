@@ -44,12 +44,46 @@ Criterios aplicados:
 ## Estructura
 
 ```
-index.html        UI: formulario de ingreso y tablero Kanban de 4 columnas
+index.html        UI: panel de métricas, formulario, tablero Kanban y asistente de contacto
 js/storage.js     Storage Controller: CRUD sobre localStorage con esquema versionado
-js/ui.js          Vista: iconos, estilos por prioridad, toasts y plantilla de tarjeta
-js/gemini.js      Gemini API Service: system prompt, llamada HTTP y validación del JSON
-js/app.js         Main App: orquesta eventos de la UI con storage y el servicio de IA
+js/metrics.js     Métricas del embudo: funciones puras sobre la lista de leads
+js/ui.js          Vista: iconos, estilos por prioridad, toasts, tarjetas y panel
+js/gemini.js      Gemini API Service: los dos prompts, llamada HTTP y validación del JSON
+js/app.js         Main App: orquesta eventos de la UI con storage, métricas y el servicio de IA
 ```
+
+## Funcionalidades
+
+### Lead scoring semántico
+
+El núcleo del MVP: Gemini lee las notas de la interacción y devuelve un score de 1 a 100,
+una prioridad y el argumento que la justifica. La tarjeta cambia de color y salta a la
+columna correspondiente.
+
+### Asistente de primer contacto
+
+Equivalente al *AI email writer* de Pipedrive y al asistente de redacción de HubSpot, pero
+apoyado en el score y en las notas que ya viven en el CRM. Sobre un lead ya calificado,
+"Redactar contacto" abre un compositor donde se elige canal (WhatsApp o Email) y tono
+(Cercano, Formal o Directo); Gemini escribe el mensaje citando una señal concreta de las
+notas y explica qué gancho usó.
+
+El prompt está restringido para que el mensaje sea usable de verdad: prohibido inventar
+precios, fechas o becas que no estén en las notas; máximo 55 palabras en WhatsApp y 110 en
+email; una sola pregunta de cierre; y el enfoque cambia según la prioridad, proponiendo una
+llamada inmediata en Alta y bajando la presión en Baja.
+
+El borrador es editable, se copia al portapapeles y queda guardado en el lead. Si después
+se editan las notas, el mensaje se descarta: citaba un contexto que ya no es cierto.
+
+### Panel de métricas del embudo
+
+Equivalente a *Insights and reports*. Sobre el tablero se muestran cuatro indicadores
+—prospectos, cobertura de IA, score promedio y cuántos esperan contacto—, la distribución
+de la cartera por prioridad, y un acceso directo a los tres leads que conviene contactar
+ahora: los de mayor score que todavía no tienen mensaje redactado, desempatados por
+antigüedad, porque un lead que lleva días esperando se enfría. El cálculo vive en
+`js/metrics.js` como funciones puras, sin DOM.
 
 ## Cómo correrlo
 
@@ -75,6 +109,10 @@ Luego abre `http://localhost:8000`. En producción se sirve desde GitHub Pages.
    de prioridad correspondiente.
 5. Edita las notas de un lead ya calificado: aparece el aviso *Notas modificadas* y el botón
    **Re-analizar**, para comprobar que el score reacciona al contexto nuevo.
+6. Sobre un lead calificado, presiona **Redactar contacto**, elige canal y tono, y genera el
+   mensaje. Cámbiale el tono y vuelve a generar para ver cómo se ajusta.
+7. Mira el panel superior: la cobertura de IA y la fila **Contactar ahora** se actualizan a
+   medida que calificas y redactas.
 
 ## Modelo de datos
 
@@ -91,6 +129,12 @@ Luego abre `http://localhost:8000`. En producción se sirve desde GitHub Pages.
   "notasModificadas": false,
   "vecesAnalizado": 0,
   "analizadoEn": null,
+  "mensaje": null,
+  "mensajeAsunto": null,
+  "mensajeCanal": null,
+  "mensajeTono": null,
+  "mensajeGancho": null,
+  "mensajeEn": null,
   "createdAt": 1750000000000
 }
 ```
