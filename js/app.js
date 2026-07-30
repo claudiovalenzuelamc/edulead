@@ -52,7 +52,7 @@ const ERROR_MESSAGES = {
     API_KEY_MISSING: 'Ingresa tu API Key de Gemini arriba a la derecha.',
     API_KEY_INVALID: 'API Key inválida, expirada o sin permisos. Genera otra en Google AI Studio.',
     NOTES_TOO_SHORT: 'Las notas deben tener al menos 10 caracteres para poder analizar.',
-    RATE_LIMIT_EXCEEDED: 'Cuota superada (429). Espera un minuto y vuelve a intentar.',
+    RATE_LIMIT_EXCEEDED: 'Cuota superada (429). Se reintentó varias veces; espera un minuto y vuelve a intentar.',
     MODEL_NOT_FOUND: 'El modelo de Gemini no está disponible para esta API Key.',
     JSON_PARSE_ERROR: 'La IA devolvió una respuesta que no es JSON válido. Intenta de nuevo.',
     INVALID_SCHEMA: 'La IA respondió con un formato inesperado. Intenta de nuevo.',
@@ -60,7 +60,7 @@ const ERROR_MESSAGES = {
     RESPONSE_TRUNCATED: 'La respuesta se cortó por longitud. Acorta las notas.',
     CONTENT_BLOCKED: 'El contenido fue bloqueado por los filtros de seguridad de Gemini.',
     BAD_REQUEST: 'La petición a Gemini fue rechazada. Revisa la consola para el detalle.',
-    SERVER_ERROR: 'Gemini está con problemas (5xx). Reintenta en unos segundos.',
+    SERVER_ERROR: 'Los modelos de Gemini están sobrecargados (503). Ya se reintentó con backoff y con modelos alternativos: espera un minuto y vuelve a intentar.',
     TIMEOUT: 'La petición tardó demasiado (30s) y se canceló.',
     NETWORK_ERROR: 'Sin conexión con la API de Gemini. Revisa tu internet.',
     STORAGE_FULL: 'El almacenamiento del navegador está lleno. Borra algunos leads.',
@@ -82,7 +82,7 @@ function reportError(error, fallback = 'Ocurrió un error inesperado.') {
 function refreshApiKeyStatus() {
     const hasKey = Boolean(getStoredApiKey());
     apiKeyStatus.textContent = hasKey ? 'Clave activa' : 'Sin clave';
-    apiKeyStatus.className = `text-xs whitespace-nowrap ${hasKey ? 'text-emerald-600 font-medium' : 'text-gray-400'}`;
+    apiKeyStatus.className = `text-xs whitespace-nowrap ${hasKey ? 'text-gold-500 font-semibold' : 'text-ink-faint'}`;
 }
 
 function persistApiKey() {
@@ -138,15 +138,27 @@ function renderBoard() {
     }
 }
 
-function setCardLoading(id, isLoading) {
+function analyzeButtonFor(id) {
     const card = board.querySelector(`[data-id="${CSS.escape(id)}"]`);
-    const button = card?.querySelector('[data-action="analyze"]');
+    return card?.querySelector('[data-action="analyze"]') ?? null;
+}
+
+function setCardLoading(id, isLoading, label = 'Analizando...') {
+    const button = analyzeButtonFor(id);
     if (!button) return;
 
     button.disabled = isLoading;
     if (isLoading) {
-        button.innerHTML = `${ICONS.spinner}<span>Analizando...</span>`;
+        button.innerHTML = `${ICONS.spinner}<span>${label}</span>`;
     }
+}
+
+/** Feedback mientras el servicio reintenta por sobrecarga (503) o cuota (429). */
+function setCardRetrying(id, { attempt, switchingTo }) {
+    const label = switchingTo
+        ? 'Probando modelo alternativo...'
+        : `Sobrecargado, reintentando (${attempt + 1})...`;
+    setCardLoading(id, true, label);
 }
 
 /* ------------------------------ Formulario ------------------------------ */
@@ -263,7 +275,9 @@ board.addEventListener('click', async (event) => {
         setCardLoading(id, true);
 
         try {
-            const result = await analyzeLeadWithGemini(lead.curso, lead.notas, apiKey);
+            const result = await analyzeLeadWithGemini(lead.curso, lead.notas, apiKey, {
+                onProgress: (info) => setCardRetrying(id, info)
+            });
 
             updateLead(id, {
                 score: result.score,

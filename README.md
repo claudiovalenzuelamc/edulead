@@ -11,6 +11,36 @@ de contacto en un tablero Kanban.
 HTML5 + TailwindCSS (Play CDN) + JavaScript ES6 modules. Sin backend, sin build, sin dependencias que instalar.
 Los datos viven en `localStorage`; la API Key vive en `sessionStorage` y nunca se commitea.
 
+## Identidad visual
+
+Interfaz oscura construida sobre la paleta corporativa. Los tokens se declaran una sola vez en
+`tailwind.config`, dentro de `index.html`, y nada en el código usa colores sueltos de Tailwind.
+
+| Token | Hex | Uso |
+| --- | --- | --- |
+| `night` | `#020202` | Fondo de página |
+| `surface` | `#0C0C0C` | Tarjetas, columnas y barra superior |
+| `raised` | `#141414` | Inputs, hover y bloques citados |
+| `line` | `#232323` | Bordes y separadores |
+| `coral-500` | `#ED5543` | Color de acción: botón primario, prioridad alta, errores |
+| `gold-500` | `#FBC80C` | Atención: prioridad media, advertencias, clave activa |
+| `grape-500` | `#2F0558` | Morado corporativo: prioridad baja, confirmaciones |
+| `ink` | `#FDFDFD` | Texto principal |
+
+Criterios aplicados:
+
+- **Mapeo semántico del Kanban.** Alta = coral (lead caliente, contactar ya), Media = amarillo,
+  Baja = morado, Sin calificar = neutro. Es el mismo código de color de la marca, donde el coral
+  marca lo que requiere acción inmediata y el amarillo lo que solo requiere atención.
+- **El morado nunca va como texto sobre negro.** `#2F0558` tiene contraste 1.20:1 contra `#0C0C0C`,
+  así que se usa solo como relleno con texto blanco encima (16:1). Para texto y bordes se usa el
+  tono derivado `grape-300` (`#A17BC7`, 5.75:1).
+- **Sobre coral y amarillo el texto va en negro,** no en blanco: `#020202` sobre coral da 5.91:1
+  mientras que el blanco da 3.45:1, y sobre amarillo la diferencia es 13.21:1 contra 1.54:1.
+- **Todas las escalas se derivaron del hue del color corporativo** y se verificaron contra WCAG AA.
+- El fondo se llama `night` y no `base` porque `text-base` ya existe en Tailwind como tamaño de
+  fuente, y declarar un color `base` haría que esa clase aplicara color y tamaño a la vez.
+
 ## Estructura
 
 ```
@@ -80,8 +110,14 @@ y un `responseSchema` que fuerza exactamente estos campos:
 
 Detalles de implementación:
 
-- **Modelo:** `gemini-3.5-flash`, con reintento automático en `gemini-flash-latest` si el
-  catálogo cambia. `gemini-1.5-flash` está dado de baja y devuelve 404.
+- **Cadena de modelos:** `gemini-3.5-flash` → `gemini-3.1-flash-lite` → `gemini-flash-latest`.
+  El primero da mejor calidad; el segundo es más liviano y suele seguir disponible cuando el
+  flagship devuelve 503; el tercero es un alias de respaldo si el catálogo cambia.
+  `gemini-1.5-flash` está dado de baja y devuelve 404.
+- **Reintentos:** ante errores transitorios (429, 5xx, timeout, red) se reintenta hasta 3 veces
+  por modelo con backoff exponencial y jitter (~0,8 s, 1,6 s), y si el modelo sigue caído se pasa
+  al siguiente de la cadena. Los errores de cliente (400, 403, JSON inválido) fallan de inmediato,
+  sin reintentar. Se ajusta en `retryConfig`, dentro de `js/gemini.js`.
 - **Autenticación:** la clave va en el header `x-goog-api-key`, no en la query string.
 - **Coherencia:** la prioridad se deriva del `score` (≥75 Alta, ≥40 Media, resto Baja) para
   que el badge nunca contradiga la columna, aunque el modelo responda algo distinto.
@@ -93,7 +129,8 @@ Detalles de implementación:
 | --- | --- |
 | Falta API Key | Ingresa tu API Key de Gemini arriba a la derecha. |
 | Key inválida (401/403) | API Key inválida, expirada o sin permisos. |
-| Cuota superada (429) | Cuota superada (429). Espera un minuto y vuelve a intentar. |
+| Cuota superada (429) | Se reintenta con backoff; si persiste, avisa de esperar un minuto. |
+| Modelo sobrecargado (503) | Se reintenta y se cambia de modelo; si persiste, avisa de sobrecarga. |
 | Modelo inexistente (404) | El modelo de Gemini no está disponible para esta API Key. |
 | Respuesta no-JSON | La IA devolvió una respuesta que no es JSON válido. |
 | Esquema inesperado | La IA respondió con un formato inesperado. |
