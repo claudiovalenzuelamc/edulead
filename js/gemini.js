@@ -1,6 +1,10 @@
 /**
- * Gemini API Service — arma el prompt, llama a generateContent y valida la respuesta.
+ * Gemini API Service — arma los prompts, llama a generateContent y valida las respuestas.
  * La API Key la aporta el usuario/evaluador y vive solo en sessionStorage.
+ *
+ * Expone dos capacidades:
+ *   analyzeLeadWithGemini    -> lead scoring semántico
+ *   draftOutreachWithGemini  -> redacción del primer mensaje de contacto
  */
 
 const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
@@ -26,6 +30,9 @@ const REQUEST_TIMEOUT_MS = 30000;
 const MIN_NOTES_LENGTH = 10;
 const API_KEY_STORAGE = 'edulead_gemini_key';
 
+export const CANALES = ['WhatsApp', 'Email'];
+export const TONOS = ['Cercano', 'Formal', 'Directo'];
+
 export class GeminiError extends Error {
     constructor(code, detail) {
         super(code);
@@ -35,7 +42,9 @@ export class GeminiError extends Error {
     }
 }
 
-const SYSTEM_PROMPT = `Actúas como un analista de ventas senior de un bootcamp tecnológico. Tu objetivo es leer el perfil y las notas de un prospecto (lead) y determinar su intención de compra.
+/* ------------------------------ Prompts ------------------------------ */
+
+const SCORING_PROMPT = `Actúas como un analista de ventas senior de un bootcamp tecnológico. Tu objetivo es leer el perfil y las notas de un prospecto (lead) y determinar su intención de compra.
 
 RÚBRICA DE EVALUACIÓN
 Sube el score (+):
@@ -69,7 +78,31 @@ Salida: {"score": 93, "probabilidad": "Alta", "argumento": "Presupuesto aprobado
 Entrada: Curso: Diseño UX/UI. Notas: Estudiante de primer año, pregunta si hay material gratuito, dice que está mirando opciones para el próximo año.
 Salida: {"score": 18, "probabilidad": "Baja", "argumento": "Busca material gratuito y proyecta la decisión al próximo año: sin intención inmediata."}`;
 
-const RESPONSE_SCHEMA = {
+const OUTREACH_PROMPT = `Actúas como un ejecutivo comercial senior de un bootcamp tecnológico en Chile. Escribes el PRIMER mensaje de contacto a un prospecto, a partir de las notas que registró el vendedor.
+
+REGLAS DE REDACCIÓN
+- Español de Chile, natural y profesional. Nada de traducciones literales del inglés.
+- Trata al prospecto de "tú" si el tono es Cercano o Directo, y de "usted" si es Formal.
+- Referencia UNA señal concreta de las notas (su rol, su urgencia, su duda, su presupuesto). Eso demuestra que leíste su caso.
+- Nunca inventes datos que no estén en las notas: ni precios, ni fechas de inicio, ni becas, ni nombres de profesores.
+- Cierra con UNA sola pregunta o llamado a la acción claro.
+- Prohibido el relleno comercial: "espero que estés muy bien", "somos líderes en", "no dudes en contactarme".
+- No uses emojis salvo que el canal sea WhatsApp y el tono sea Cercano, y en ese caso como máximo uno.
+
+FORMATO POR CANAL
+- WhatsApp: máximo 55 palabras, sin asunto, en uno o dos párrafos cortos. El campo "asunto" va vacío.
+- Email: máximo 110 palabras, con saludo y despedida. El "asunto" debe tener máximo 8 palabras, ser específico y no parecer spam.
+
+AJUSTE POR PRIORIDAD
+- Prioridad Alta: propone un paso concreto e inmediato, como coordinar una llamada esta semana.
+- Prioridad Media: resuelve primero la duda o la objeción que aparece en las notas.
+- Prioridad Baja: mensaje breve y de bajo compromiso, sin presionar el cierre.
+
+RESTRICCIÓN ABSOLUTA
+Devuelve ÚNICA Y EXCLUSIVAMENTE un objeto JSON válido, sin markdown, sin bloques de código y sin texto adicional.
+El campo "gancho" explica en máximo 15 palabras qué señal de las notas usaste y por qué.`;
+
+const SCORING_SCHEMA = {
     type: 'OBJECT',
     properties: {
         score: { type: 'INTEGER' },
@@ -78,6 +111,17 @@ const RESPONSE_SCHEMA = {
     },
     required: ['score', 'probabilidad', 'argumento'],
     propertyOrdering: ['score', 'probabilidad', 'argumento']
+};
+
+const OUTREACH_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+        asunto: { type: 'STRING' },
+        mensaje: { type: 'STRING' },
+        gancho: { type: 'STRING' }
+    },
+    required: ['asunto', 'mensaje', 'gancho'],
+    propertyOrdering: ['asunto', 'mensaje', 'gancho']
 };
 
 /* ------------------------------ API Key ------------------------------ */
@@ -129,16 +173,13 @@ function backoffDelay(attempt) {
     return exponential + Math.random() * retryConfig.baseDelayMs * 0.5;
 }
 
-function buildPayload(curso, notas) {
+function buildPayload(systemPrompt, userText, schema) {
     return {
-        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{
-            role: 'user',
-            parts: [{ text: `PROSPECTO A EVALUAR\nCurso de interés: ${curso || 'no especificado'}\nNotas: ${notas}` }]
-        }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
         generationConfig: {
             responseMimeType: 'application/json',
-            responseSchema: RESPONSE_SCHEMA
+            responseSchema: schema
         }
     };
 }
@@ -155,7 +196,7 @@ function mapHttpError(status, body) {
     return new GeminiError('HTTP_ERROR', `${status} ${apiMessage}`.trim());
 }
 
-/** Un intento: pide, valida y devuelve el resultado ya normalizado. */
+/** Un intento contra un modelo: pide, parsea y devuelve el JSON crudo del modelo. */
 async function requestOnce(model, payload, apiKey) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -197,52 +238,19 @@ async function requestOnce(model, payload, apiKey) {
     const rawText = candidate?.content?.parts?.map((part) => part.text).filter(Boolean).join('') || '';
     if (!rawText.trim()) throw new GeminiError('EMPTY_RESPONSE');
 
-    let parsed;
     try {
-        parsed = JSON.parse(stripCodeFences(rawText));
+        return JSON.parse(stripCodeFences(rawText));
     } catch (error) {
         // El parseo es lo único que este try debe capturar.
         throw new GeminiError('JSON_PARSE_ERROR', rawText.slice(0, 200));
     }
-
-    const rawScore = Number(parsed.score);
-    if (!Number.isFinite(rawScore) || typeof parsed.argumento !== 'string' || !parsed.argumento.trim()) {
-        throw new GeminiError('INVALID_SCHEMA', JSON.stringify(parsed).slice(0, 200));
-    }
-
-    const score = Math.min(100, Math.max(1, Math.round(rawScore)));
-
-    return {
-        score,
-        probabilidad: probabilidadFromScore(score),
-        argumento: parsed.argumento.trim(),
-        modelo: model
-    };
 }
 
-/* ------------------------------ API pública ------------------------------ */
-
 /**
- * Califica un lead con Gemini.
- *
- * Reintenta los errores transitorios (429, 5xx, timeout, red) con backoff exponencial,
- * y si un modelo sigue caído pasa al siguiente de la cadena.
- *
- * @param {string} curso
- * @param {string} notas
- * @param {string} apiKey
- * @param {{ onProgress?: (info: {model: string, attempt: number, code: string, waitMs?: number, switchingTo?: string}) => void }} [options]
- * @returns {Promise<{score:number, probabilidad:'Alta'|'Media'|'Baja', argumento:string, modelo:string}>}
- * @throws {GeminiError}
+ * Recorre la cadena de modelos reintentando los errores transitorios.
+ * @returns {Promise<{data: object, modelo: string}>}
  */
-export async function analyzeLeadWithGemini(curso, notas, apiKey, options = {}) {
-    const { onProgress } = options;
-
-    if (!apiKey || !String(apiKey).trim()) throw new GeminiError('API_KEY_MISSING');
-    if (!notas || notas.trim().length < MIN_NOTES_LENGTH) throw new GeminiError('NOTES_TOO_SHORT');
-
-    const payload = buildPayload(curso, notas.trim());
-    const key = String(apiKey).trim();
+async function callGemini(payload, apiKey, onProgress) {
     let lastError = null;
 
     for (let modelIndex = 0; modelIndex < MODELS.length; modelIndex++) {
@@ -250,7 +258,7 @@ export async function analyzeLeadWithGemini(curso, notas, apiKey, options = {}) 
 
         for (let attempt = 1; attempt <= retryConfig.attemptsPerModel; attempt++) {
             try {
-                return await requestOnce(model, payload, key);
+                return { data: await requestOnce(model, payload, apiKey), modelo: model };
             } catch (error) {
                 lastError = error;
 
@@ -275,4 +283,96 @@ export async function analyzeLeadWithGemini(curso, notas, apiKey, options = {}) 
     }
 
     throw lastError ?? new GeminiError('MODEL_NOT_FOUND');
+}
+
+function requireApiKey(apiKey) {
+    if (!apiKey || !String(apiKey).trim()) throw new GeminiError('API_KEY_MISSING');
+    return String(apiKey).trim();
+}
+
+function requireNotes(notas) {
+    if (!notas || notas.trim().length < MIN_NOTES_LENGTH) throw new GeminiError('NOTES_TOO_SHORT');
+    return notas.trim();
+}
+
+/* ------------------------------ Lead scoring ------------------------------ */
+
+/**
+ * Califica un lead con Gemini.
+ * @returns {Promise<{score:number, probabilidad:'Alta'|'Media'|'Baja', argumento:string, modelo:string}>}
+ * @throws {GeminiError}
+ */
+export async function analyzeLeadWithGemini(curso, notas, apiKey, options = {}) {
+    const key = requireApiKey(apiKey);
+    const texto = requireNotes(notas);
+
+    const payload = buildPayload(
+        SCORING_PROMPT,
+        `PROSPECTO A EVALUAR\nCurso de interés: ${curso || 'no especificado'}\nNotas: ${texto}`,
+        SCORING_SCHEMA
+    );
+
+    const { data, modelo } = await callGemini(payload, key, options.onProgress);
+
+    const rawScore = Number(data.score);
+    if (!Number.isFinite(rawScore) || typeof data.argumento !== 'string' || !data.argumento.trim()) {
+        throw new GeminiError('INVALID_SCHEMA', JSON.stringify(data).slice(0, 200));
+    }
+
+    const score = Math.min(100, Math.max(1, Math.round(rawScore)));
+
+    return {
+        score,
+        probabilidad: probabilidadFromScore(score),
+        argumento: data.argumento.trim(),
+        modelo
+    };
+}
+
+/* ------------------------------ Primer contacto ------------------------------ */
+
+/**
+ * Redacta el primer mensaje de contacto para un lead ya calificado.
+ * Equivale al "AI email writer" de Pipedrive o al asistente de redacción de HubSpot,
+ * pero apoyado en el score y en las notas que ya viven en el CRM.
+ *
+ * @param {{nombre:string, curso:string, notas:string, score:number, probabilidad:string, argumento:string}} lead
+ * @param {{canal:'WhatsApp'|'Email', tono:'Cercano'|'Formal'|'Directo'}} opciones
+ * @param {string} apiKey
+ * @returns {Promise<{asunto:string, mensaje:string, gancho:string, canal:string, tono:string, modelo:string}>}
+ * @throws {GeminiError}
+ */
+export async function draftOutreachWithGemini(lead, opciones, apiKey, options = {}) {
+    const key = requireApiKey(apiKey);
+    const texto = requireNotes(lead?.notas);
+
+    const canal = CANALES.includes(opciones?.canal) ? opciones.canal : 'WhatsApp';
+    const tono = TONOS.includes(opciones?.tono) ? opciones.tono : 'Cercano';
+
+    const contexto = [
+        `Canal: ${canal}`,
+        `Tono: ${tono}`,
+        `Nombre del prospecto: ${lead.nombre || 'sin nombre'}`,
+        `Curso de interés: ${lead.curso || 'no especificado'}`,
+        `Prioridad asignada: ${lead.probabilidad || 'sin calificar'}`,
+        `Score: ${Number.isFinite(lead.score) ? lead.score : 'sin score'}`,
+        lead.argumento ? `Razón del score: ${lead.argumento}` : null,
+        `Notas de la interacción: ${texto}`
+    ].filter(Boolean).join('\n');
+
+    const payload = buildPayload(OUTREACH_PROMPT, `PROSPECTO\n${contexto}`, OUTREACH_SCHEMA);
+    const { data, modelo } = await callGemini(payload, key, options.onProgress);
+
+    if (typeof data.mensaje !== 'string' || !data.mensaje.trim()) {
+        throw new GeminiError('INVALID_SCHEMA', JSON.stringify(data).slice(0, 200));
+    }
+
+    return {
+        asunto: canal === 'Email' ? String(data.asunto || '').trim() : '',
+        mensaje: data.mensaje.trim(),
+        gancho: String(data.gancho || '').trim(),
+        canal,
+        tono,
+        modelo
+    };
 }
